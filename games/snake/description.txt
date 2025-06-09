@@ -1,0 +1,3 @@
+Snake for Toddlers
+
+A gentle Snake game designed for young children. Move with arrow keys to eat red food squares and grow your green snake. No game over - just fun exploration! Hold arrow keys for continuous movement. 

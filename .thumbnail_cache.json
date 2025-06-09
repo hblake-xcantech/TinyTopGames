@@ -1,0 +1,12 @@
+{
+  "pong": {
+    "game_hash": "3e8d5aeb41022e8b139b73a54cf5f62ea8e664b1fcd5a68e884bf4a3b829ed83",
+    "thumbnail_path": "games/pong/thumbnail.png",
+    "generated_at": "1749436754.5517368"
+  },
+  "snake": {
+    "game_hash": "d83cd4e4a06e2e7d2d1bb590ee6a7232ae9cd492ca586383b08d6da68a40a8b5",
+    "thumbnail_path": "games/snake/thumbnail.png",
+    "generated_at": "1749436755.463055"
+  }
+}
