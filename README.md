@@ -13,7 +13,7 @@ pip install -r requirements.txt
 ## Run the game
 
 ```bash
-python main.py
+python main_menu.py
 ```
 
 ## Notes
@@ -23,4 +23,4 @@ python main.py
 
 ## TODO
 
-- 
+* Add more kid-friendly games
