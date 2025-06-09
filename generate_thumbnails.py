@@ -7,11 +7,11 @@ Developer tool to generate thumbnails for all games in the games/ directory.
 Only regenerates thumbnails when game.py has been modified since last generation.
 
 Features:
-- Automatic game discovery in games/ directory
-- Caches file modification times to avoid unnecessary regeneration
-- Runs games in --screenshot mode to capture thumbnails
-- Generates 320x240 PNG thumbnails
-- Creates .thumbnail_cache.json to track generation status
+ - Automatic game discovery in games/ directory
+ - Caches file modification times to avoid unnecessary regeneration
+ - Launches games with SCREENSHOT_MODE=1 to capture thumbnails
+ - Generates 320x240 PNG thumbnails
+ - Creates .thumbnail_cache.json to track generation status
 
 Usage:
   python generate_thumbnails.py           # Generate all missing/outdated thumbnails
@@ -136,10 +136,12 @@ def generate_thumbnail(game_info):
     print(f"Generating thumbnail for {game_info['name']}...")
     
     try:
-        # Run game in screenshot mode
+        # Run game in screenshot mode using environment variable
+        env = os.environ.copy()
+        env["SCREENSHOT_MODE"] = "1"
         result = subprocess.run([
-            sys.executable, game_info['game_py'], '--screenshot'
-        ], cwd=os.getcwd(), capture_output=True, text=True, timeout=30)
+            sys.executable, game_info['game_py']
+        ], cwd=os.getcwd(), env=env, capture_output=True, text=True, timeout=30)
         
         if result.returncode == 0:
             if Path(game_info['thumbnail_path']).exists():
@@ -244,7 +246,7 @@ def main():
     
     if failed_count > 0:
         print(f"\n⚠️  {failed_count} games failed to generate thumbnails.")
-        print(f"Make sure each game supports the --screenshot argument.")
+        print("Make sure each game uses the screenshot utilities.")
 
 if __name__ == "__main__":
     main() 
