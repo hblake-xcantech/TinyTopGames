@@ -8,33 +8,34 @@
 #
 # Usage:
 #   ./TinyTopGames.sh
-#   bash TinyTopGames.sh
 #
 # Requirements:
-#   - Python 3.x with pygame installed
+#   - Python 3.x with pygame installed in venv
 #   - games/ directory with game.py files
 #
 
 echo "🎮 Starting Tiny Top Games..."
 
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    if ! command -v python &> /dev/null; then
-        echo "❌ Error: Python not found!"
-        echo "Please install Python 3.x and try again."
-        exit 1
-    else
-        PYTHON_CMD="python"
-    fi
+# Move to script directory (safe if run from anywhere)
+cd "$(dirname "$0")"
+
+# Force using venv python if available
+if [ -x "./venv/bin/python" ]; then
+    PYTHON_CMD="./venv/bin/python"
 else
-    PYTHON_CMD="python3"
+    echo "❌ Error: venv not found or broken!"
+    echo "Please run:"
+    echo "  python3 -m venv venv"
+    echo "  source venv/bin/activate"
+    echo "  pip install -r requirements.txt"
+    exit 1
 fi
 
-# Check if pygame is installed
+# Check if pygame is installed in venv
 $PYTHON_CMD -c "import pygame" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "❌ Error: pygame not found!"
-    echo "Please install pygame with: pip install pygame"
+    echo "❌ Error: pygame not found in venv!"
+    echo "Please run: source venv/bin/activate && pip install pygame"
     exit 1
 fi
 
