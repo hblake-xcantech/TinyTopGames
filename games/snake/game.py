@@ -21,16 +21,20 @@ import os
 import random
 import argparse
 
+# Import game utilities for common functionality
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from game_utils import handle_common_events, quit_game, COLORS
+
 # Config
 WIDTH, HEIGHT = 1024, 600
 CELL_SIZE = 20
 FPS = 10
 
-# Colors
-BLACK = (0, 0, 0)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
+# Colors (using game_utils colors for consistency)
+BLACK = COLORS['BLACK']
+GREEN = COLORS['GREEN']
+RED = COLORS['RED']
+BLUE = COLORS['BLUE']
 
 def create_sound(frequency, duration, wave_type='sine'):
     """Create a sound effect with given frequency, duration and wave type"""
@@ -84,14 +88,40 @@ def setup_sounds():
     return collision_sound, move_sound, eat_sound
 
 def spawn_food(snake):
-    """Spawn food on the grid, avoiding snake positions"""
-    while True:
-        # Make sure food is perfectly aligned with the grid by using the same logic as snake movement
-        food_x = random.randint(0, (WIDTH - CELL_SIZE) // CELL_SIZE) * CELL_SIZE
-        food_y = random.randint(0, (HEIGHT - CELL_SIZE) // CELL_SIZE) * CELL_SIZE
+    """Spawn food on the grid, avoiding snake positions and ensuring it's always visible"""
+    # Calculate valid grid positions (ensure food is fully visible)
+    max_grid_x = (WIDTH - CELL_SIZE) // CELL_SIZE
+    max_grid_y = (HEIGHT - CELL_SIZE) // CELL_SIZE
+    
+    # Ensure we have at least some margin from edges
+    min_x = 1
+    min_y = 1
+    max_x = max(min_x + 1, max_grid_x - 1)
+    max_y = max(min_y + 1, max_grid_y - 1)
+    
+    attempts = 0
+    while attempts < 100:  # Prevent infinite loop
+        # Generate random grid position within safe bounds
+        grid_x = random.randint(min_x, max_x)
+        grid_y = random.randint(min_y, max_y)
+        
+        food_x = grid_x * CELL_SIZE
+        food_y = grid_y * CELL_SIZE
         food_pos = (food_x, food_y)
+        
+        # Make sure food doesn't spawn on snake
         if food_pos not in snake:
-            return food_pos
+            # Double-check that food is within visible area
+            if (food_x >= 0 and food_x < WIDTH - CELL_SIZE and 
+                food_y >= 0 and food_y < HEIGHT - CELL_SIZE):
+                return food_pos
+        
+        attempts += 1
+    
+    # Fallback: place food at a safe default position
+    safe_x = CELL_SIZE * 5
+    safe_y = CELL_SIZE * 5
+    return (safe_x, safe_y)
 
 def move_snake(snake, food, direction_key, collision_sound, move_sound, eat_sound):
     """Helper function to move snake in given direction"""
@@ -110,13 +140,15 @@ def move_snake(snake, food, direction_key, collision_sound, move_sound, eat_soun
     if (new_head[0] < 0 or new_head[0] >= WIDTH or
         new_head[1] < 0 or new_head[1] >= HEIGHT):
         print("Brrrp! Wall hit - can't move there!")
-        collision_sound.play()
+        if collision_sound:
+            collision_sound.play()
         return False, food, 0
     
     # Check collision with self - just block movement and play sound
     if new_head in snake:
         print("Brrrp! Can't move into yourself!")
-        collision_sound.play()
+        if collision_sound:
+            collision_sound.play()
         return False, food, 0
     
     # Valid move - move snake
@@ -126,12 +158,14 @@ def move_snake(snake, food, direction_key, collision_sound, move_sound, eat_soun
     if new_head == food:
         food = spawn_food(snake)
         print(f"Yum! Food eaten!")
-        eat_sound.play()  # Play happy eating sound
+        if eat_sound:
+            eat_sound.play()
         # Snake grows automatically by not removing tail
         return True, food, 1
     else:
         snake.pop()  # Remove tail only if no food eaten
-        move_sound.play()  # Play tic sound for normal movement
+        if move_sound:
+            move_sound.play()
         return True, food, 0
 
 def take_screenshot(screen):
@@ -190,9 +224,12 @@ def run_game(screenshot_mode=False):
             # Draw everything
             screen.fill(BLACK)
             
-            # Draw snake
-            for segment in snake:
-                pygame.draw.rect(screen, GREEN, (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
+            # Draw snake with white head
+            for i, segment in enumerate(snake):
+                if i == 0:  # Head
+                    pygame.draw.rect(screen, COLORS['WHITE'], (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
+                else:  # Body
+                    pygame.draw.rect(screen, GREEN, (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
             
             # Draw food
             pygame.draw.rect(screen, RED, (food[0], food[1], CELL_SIZE, CELL_SIZE))
@@ -207,9 +244,12 @@ def run_game(screenshot_mode=False):
             break
         
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Handle common events (including ESC key)
+            if not handle_common_events(event):
                 running = False
-            elif event.type == pygame.KEYDOWN:
+                break
+                
+            if event.type == pygame.KEYDOWN:
                 # Handle initial key press
                 if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT]:
                     # If this is a new key or we're not in continuous mode, move immediately
@@ -244,9 +284,12 @@ def run_game(screenshot_mode=False):
         # Draw everything
         screen.fill(BLACK)
         
-        # Draw snake
-        for segment in snake:
-            pygame.draw.rect(screen, GREEN, (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
+        # Draw snake with white head
+        for i, segment in enumerate(snake):
+            if i == 0:  # Head
+                pygame.draw.rect(screen, COLORS['WHITE'], (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
+            else:  # Body
+                pygame.draw.rect(screen, GREEN, (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
         
         # Draw food
         pygame.draw.rect(screen, RED, (food[0], food[1], CELL_SIZE, CELL_SIZE))
@@ -259,7 +302,8 @@ def run_game(screenshot_mode=False):
         pygame.display.flip()
         clock.tick(FPS)
 
-    pygame.quit()
+    # Use game_utils quit instead of pygame.quit() directly
+    quit_game()
 
 def main():
     """Main entry point with command line argument support"""

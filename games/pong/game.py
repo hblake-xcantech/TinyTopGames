@@ -12,7 +12,12 @@ Usage:
 
 import pygame
 import sys
+import os
 import argparse
+
+# Import game utilities for common functionality
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from game_utils import handle_common_events, quit_game, COLORS
 
 # Config
 WIDTH, HEIGHT = 1024, 600
@@ -20,10 +25,10 @@ PADDLE_WIDTH, PADDLE_HEIGHT = 20, 100
 BALL_SIZE = 20
 FPS = 60
 
-# Colors
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-BLUE = (0, 0, 255)
+# Colors (using game_utils colors for consistency)
+BLACK = COLORS['BLACK']
+WHITE = COLORS['WHITE']
+BLUE = COLORS['BLUE']
 
 def take_screenshot(screen):
     """Take a screenshot and save as thumbnail"""
@@ -82,8 +87,10 @@ def run_game(screenshot_mode=False):
             break
         
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Handle common events (including ESC key)
+            if not handle_common_events(event):
                 running = False
+                break
         
         # Simple AI and ball movement (placeholder logic)
         keys = pygame.key.get_pressed()
@@ -134,7 +141,8 @@ def run_game(screenshot_mode=False):
         pygame.display.flip()
         clock.tick(FPS)
 
-    pygame.quit()
+    # Use game_utils quit instead of pygame.quit() directly
+    quit_game()
 
 def main():
     """Main entry point with command line argument support"""
