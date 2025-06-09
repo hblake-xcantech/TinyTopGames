@@ -11,15 +11,14 @@ A simple, forgiving Snake game designed for toddlers with:
 - Growing snake when eating food
 
 Usage:
-  python game.py           # Normal game mode
-  python game.py --screenshot  # Generate thumbnail and exit
+  python game.py
 """
 
 import pygame
 import sys
 import os
 import random
-import argparse
+from utils import screenshot_requested, check_screenshot
 
 # Config
 WIDTH, HEIGHT = 1024, 600
@@ -134,20 +133,11 @@ def move_snake(snake, food, direction_key, collision_sound, move_sound, eat_soun
         move_sound.play()  # Play tic sound for normal movement
         return True, food, 0
 
-def take_screenshot(screen):
-    """Take a screenshot and save as thumbnail"""
-    # Scale down to thumbnail size (320x240)
-    thumbnail_surface = pygame.transform.scale(screen, (320, 240))
-    
-    # Save thumbnail
-    thumbnail_path = os.path.join(os.path.dirname(__file__), "thumbnail.png")
-    pygame.image.save(thumbnail_surface, thumbnail_path)
-    print(f"Thumbnail saved to {thumbnail_path}")
-
-def run_game(screenshot_mode=False):
+def run_game():
     """Main game function"""
     # Init pygame
     pygame.init()
+    screenshot_mode = screenshot_requested()
     if not screenshot_mode:
         pygame.mixer.init()
 
@@ -181,30 +171,9 @@ def run_game(screenshot_mode=False):
     # Game loop
     clock = pygame.time.Clock()
     running = True
-    
+
     while running:
         current_time = pygame.time.get_ticks()
-        
-        # In screenshot mode, just draw one frame and exit
-        if screenshot_mode:
-            # Draw everything
-            screen.fill(BLACK)
-            
-            # Draw snake
-            for segment in snake:
-                pygame.draw.rect(screen, GREEN, (segment[0], segment[1], CELL_SIZE, CELL_SIZE))
-            
-            # Draw food
-            pygame.draw.rect(screen, RED, (food[0], food[1], CELL_SIZE, CELL_SIZE))
-            
-            # Draw score
-            font = pygame.font.Font(None, 36)
-            score_text = font.render(f"Snake Game - Score: {score}", True, BLUE)
-            screen.blit(score_text, (10, 10))
-            
-            pygame.display.flip()
-            take_screenshot(screen)
-            break
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -257,24 +226,14 @@ def run_game(screenshot_mode=False):
         screen.blit(score_text, (10, 10))
 
         pygame.display.flip()
+        check_screenshot(screen, os.path.join(os.path.dirname(__file__), "thumbnail.png"))
         clock.tick(FPS)
 
     pygame.quit()
 
 def main():
-    """Main entry point with command line argument support"""
-    parser = argparse.ArgumentParser(description='Snake Game for Toddlers')
-    parser.add_argument('--screenshot', action='store_true', 
-                       help='Generate thumbnail screenshot and exit')
-    
-    args = parser.parse_args()
-    
-    if args.screenshot:
-        print("Generating thumbnail...")
-        run_game(screenshot_mode=True)
-        print("Thumbnail generation complete!")
-    else:
-        run_game(screenshot_mode=False)
+    """Main entry point"""
+    run_game()
 
 if __name__ == "__main__":
     main() 
