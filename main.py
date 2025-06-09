@@ -79,6 +79,14 @@ start_y = (HEIGHT // 2 // CELL_SIZE) * CELL_SIZE
 snake = [(start_x, start_y)]
 score = 0
 
+# Key holding state
+key_held = None
+key_hold_start = 0
+continuous_mode = False
+last_move_time = 0
+HOLD_THRESHOLD = 500  # ms to start continuous movement
+CONTINUOUS_MOVE_DELAY = 150  # ms between continuous moves
+
 # Food state
 def spawn_food():
     while True:
@@ -94,54 +102,85 @@ food = spawn_food()
 # Game loop
 clock = pygame.time.Clock()
 running = True
+
+def move_snake(direction_key):
+    """Helper function to move snake in given direction"""
+    if direction_key == pygame.K_UP:
+        new_head = (snake[0][0], snake[0][1] - CELL_SIZE)
+    elif direction_key == pygame.K_DOWN:
+        new_head = (snake[0][0], snake[0][1] + CELL_SIZE)
+    elif direction_key == pygame.K_LEFT:
+        new_head = (snake[0][0] - CELL_SIZE, snake[0][1])
+    elif direction_key == pygame.K_RIGHT:
+        new_head = (snake[0][0] + CELL_SIZE, snake[0][1])
+    else:
+        return False
+    
+    # Check collision with walls - just block movement and play sound
+    if (new_head[0] < 0 or new_head[0] >= WIDTH or
+        new_head[1] < 0 or new_head[1] >= HEIGHT):
+        print("Brrrp! Wall hit - can't move there!")
+        collision_sound.play()
+        return False
+    
+    # Check collision with self - just block movement and play sound
+    if new_head in snake:
+        print("Brrrp! Can't move into yourself!")
+        collision_sound.play()
+        return False
+    
+    # Valid move - move snake
+    snake.insert(0, new_head)
+    
+    # Check if food eaten
+    if new_head == food:
+        global score, food
+        score += 1
+        food = spawn_food()
+        print(f"Yum! Score: {score}")
+        eat_sound.play()  # Play happy eating sound
+        # Snake grows automatically by not removing tail
+    else:
+        snake.pop()  # Remove tail only if no food eaten
+        move_sound.play()  # Play tic sound for normal movement
+    
+    return True
+
 while running:
+    current_time = pygame.time.get_ticks()
+    
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.KEYDOWN:
-            moved = False
-            if event.key == pygame.K_UP:
-                new_head = (snake[0][0], snake[0][1] - CELL_SIZE)
-                moved = True
-            elif event.key == pygame.K_DOWN:
-                new_head = (snake[0][0], snake[0][1] + CELL_SIZE)
-                moved = True
-            elif event.key == pygame.K_LEFT:
-                new_head = (snake[0][0] - CELL_SIZE, snake[0][1])
-                moved = True
-            elif event.key == pygame.K_RIGHT:
-                new_head = (snake[0][0] + CELL_SIZE, snake[0][1])
-                moved = True
-            
-            if moved:
-                # Check collision with walls - just block movement and play sound
-                if (
-                    new_head[0] < 0 or new_head[0] >= WIDTH or
-                    new_head[1] < 0 or new_head[1] >= HEIGHT
-                ):
-                    print("Brrrp! Wall hit - can't move there!")
-                    collision_sound.play()
-                    continue  # Don't move, just play sound
-                
-                # Check collision with self - just block movement and play sound
-                if new_head in snake:
-                    print("Brrrp! Can't move into yourself!")
-                    collision_sound.play()
-                    continue  # Don't move, just play sound
-                
-                # Valid move - move snake
-                snake.insert(0, new_head)
-                
-                # Check if food eaten
-                if new_head == food:
-                    score += 1
-                    food = spawn_food()
-                    print(f"Yum! Score: {score}")
-                    eat_sound.play()  # Play happy eating sound
-                    # Snake grows automatically by not removing tail
-                else:
-                    snake.pop()  # Remove tail only if no food eaten
-                    move_sound.play()  # Play tic sound for normal movement
+            # Handle initial key press
+            if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT]:
+                # If this is a new key or we're not in continuous mode, move immediately
+                if key_held != event.key or not continuous_mode:
+                    key_held = event.key
+                    key_hold_start = current_time
+                    continuous_mode = False
+                    last_move_time = current_time
+                    
+                    # Perform the move
+                    move_snake(event.key)
+                            
+        elif event.type == pygame.KEYUP:
+            # Stop continuous movement when key is released
+            if event.key == key_held:
+                key_held = None
+                continuous_mode = False
+    
+    # Handle continuous movement when key is held
+    if key_held and current_time - key_hold_start > HOLD_THRESHOLD:
+        if not continuous_mode:
+            continuous_mode = True
+            print("Continuous mode activated!")
+        
+        # Move continuously at intervals
+        if current_time - last_move_time > CONTINUOUS_MOVE_DELAY:
+            last_move_time = current_time
+            move_snake(key_held)
 
     # Draw everything
     screen.fill(BLACK)
