@@ -6,14 +6,12 @@ Pong Game for Toddlers
 A simple Pong game designed for toddlers with easy controls.
 
 Usage:
-  python game.py           # Normal game mode
-  python game.py --screenshot  # Generate thumbnail and exit
+  python game.py
 """
 
 import pygame
 import sys
-import os
-import argparse
+from utils import check_screenshot
 
 # Import game utilities for common functionality
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -30,18 +28,7 @@ BLACK = COLORS['BLACK']
 WHITE = COLORS['WHITE']
 BLUE = COLORS['BLUE']
 
-def take_screenshot(screen):
-    """Take a screenshot and save as thumbnail"""
-    # Scale down to thumbnail size (320x240)
-    thumbnail_surface = pygame.transform.scale(screen, (320, 240))
-    
-    # Save thumbnail
-    import os
-    thumbnail_path = os.path.join(os.path.dirname(__file__), "thumbnail.png")
-    pygame.image.save(thumbnail_surface, thumbnail_path)
-    print(f"Thumbnail saved to {thumbnail_path}")
-
-def run_game(screenshot_mode=False):
+def run_game():
     """Main game function"""
     # Init pygame
     pygame.init()
@@ -63,28 +50,8 @@ def run_game(screenshot_mode=False):
     # Game loop
     clock = pygame.time.Clock()
     running = True
-    
+
     while running:
-        # In screenshot mode, just draw one frame and exit
-        if screenshot_mode:
-            # Draw everything
-            screen.fill(BLACK)
-            
-            # Draw paddles
-            pygame.draw.rect(screen, WHITE, (50, paddle1_y, PADDLE_WIDTH, PADDLE_HEIGHT))
-            pygame.draw.rect(screen, WHITE, (WIDTH - 50 - PADDLE_WIDTH, paddle2_y, PADDLE_WIDTH, PADDLE_HEIGHT))
-            
-            # Draw ball
-            pygame.draw.rect(screen, WHITE, (ball_x - BALL_SIZE//2, ball_y - BALL_SIZE//2, BALL_SIZE, BALL_SIZE))
-            
-            # Draw score
-            font = pygame.font.Font(None, 36)
-            score_text = font.render(f"Pong Game - {score1} : {score2}", True, BLUE)
-            screen.blit(score_text, (10, 10))
-            
-            pygame.display.flip()
-            take_screenshot(screen)
-            break
         
         for event in pygame.event.get():
             # Handle common events (including ESC key)
@@ -108,9 +75,22 @@ def run_game(screenshot_mode=False):
         # Ball movement
         ball_x += ball_dx
         ball_y += ball_dy
-        
-        # Ball bouncing
-        if ball_y <= 0 or ball_y >= HEIGHT:
+
+        # Rectangles for collision detection
+        paddle1_rect = pygame.Rect(50, paddle1_y, PADDLE_WIDTH, PADDLE_HEIGHT)
+        paddle2_rect = pygame.Rect(WIDTH - 50 - PADDLE_WIDTH, paddle2_y, PADDLE_WIDTH, PADDLE_HEIGHT)
+        ball_rect = pygame.Rect(ball_x - BALL_SIZE // 2, ball_y - BALL_SIZE // 2, BALL_SIZE, BALL_SIZE)
+
+        # Bounce off paddles
+        if ball_rect.colliderect(paddle1_rect) and ball_dx < 0:
+            ball_dx = -ball_dx
+            ball_x = paddle1_rect.right + BALL_SIZE // 2
+        if ball_rect.colliderect(paddle2_rect) and ball_dx > 0:
+            ball_dx = -ball_dx
+            ball_x = paddle2_rect.left - BALL_SIZE // 2
+
+        # Ball bouncing off top/bottom
+        if ball_y - BALL_SIZE // 2 <= 0 or ball_y + BALL_SIZE // 2 >= HEIGHT:
             ball_dy = -ball_dy
         
         # Ball reset (simple scoring)
@@ -139,25 +119,15 @@ def run_game(screenshot_mode=False):
         screen.blit(score_text, (10, 10))
 
         pygame.display.flip()
+        check_screenshot(screen, os.path.join(os.path.dirname(__file__), "thumbnail.png"))
         clock.tick(FPS)
 
     # Use game_utils quit instead of pygame.quit() directly
     quit_game()
 
 def main():
-    """Main entry point with command line argument support"""
-    parser = argparse.ArgumentParser(description='Pong Game for Toddlers')
-    parser.add_argument('--screenshot', action='store_true', 
-                       help='Generate thumbnail screenshot and exit')
-    
-    args = parser.parse_args()
-    
-    if args.screenshot:
-        print("Generating thumbnail...")
-        run_game(screenshot_mode=True)
-        print("Thumbnail generation complete!")
-    else:
-        run_game(screenshot_mode=False)
+    """Main entry point"""
+    run_game()
 
 if __name__ == "__main__":
     main() 
