@@ -101,9 +101,22 @@ def run_game(screenshot_mode=False):
         # Ball movement
         ball_x += ball_dx
         ball_y += ball_dy
-        
-        # Ball bouncing
-        if ball_y <= 0 or ball_y >= HEIGHT:
+
+        # Rectangles for collision detection
+        paddle1_rect = pygame.Rect(50, paddle1_y, PADDLE_WIDTH, PADDLE_HEIGHT)
+        paddle2_rect = pygame.Rect(WIDTH - 50 - PADDLE_WIDTH, paddle2_y, PADDLE_WIDTH, PADDLE_HEIGHT)
+        ball_rect = pygame.Rect(ball_x - BALL_SIZE // 2, ball_y - BALL_SIZE // 2, BALL_SIZE, BALL_SIZE)
+
+        # Bounce off paddles
+        if ball_rect.colliderect(paddle1_rect) and ball_dx < 0:
+            ball_dx = -ball_dx
+            ball_x = paddle1_rect.right + BALL_SIZE // 2
+        if ball_rect.colliderect(paddle2_rect) and ball_dx > 0:
+            ball_dx = -ball_dx
+            ball_x = paddle2_rect.left - BALL_SIZE // 2
+
+        # Ball bouncing off top/bottom
+        if ball_y - BALL_SIZE // 2 <= 0 or ball_y + BALL_SIZE // 2 >= HEIGHT:
             ball_dy = -ball_dy
         
         # Ball reset (simple scoring)
