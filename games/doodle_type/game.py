@@ -179,6 +179,16 @@ def get_job_count():
     with job_lock:
         return len(job_queue)
 
+def get_visible_job_count():
+    """Get current number of visible jobs in queue"""
+    with job_lock:
+        return len([job for job in job_queue.values() if job.visible])
+
+def get_backup_job_count():
+    """Get current number of backup (invisible) jobs in queue"""
+    with job_lock:
+        return len([job for job in job_queue.values() if not job.visible])
+
 def download_worker():
     """Background thread worker for downloading doodles"""
     while True:
@@ -510,8 +520,8 @@ def run_game():
         # Check for completed jobs (both image and audio ready)
         completed_jobs = get_completed_jobs(visible_only=True)
         for job in completed_jobs:
-            if job.word not in loaded_words:
-                print(f"✅ Adding completed job: {job.word}")
+            if job.word not in loaded_words and len(items) < 5:  # Only add if we have room
+                print(f"✅ Adding completed job: {job.word} (items on screen: {len(items)} → {len(items) + 1})")
                 
                 it = build_from_job(job, font)
                 if it["drawing"]:  # Only add if we got a valid drawing
@@ -542,6 +552,14 @@ def run_game():
                         
                         buf = ""
                         break
+            elif len(items) >= 5:
+                print(f"🚫 Not adding {job.word} - already have {len(items)} items on screen (max 5)")
+                # Return the job to the queue as a backup if we have no backups
+                if get_backup_job_count() == 0:
+                    with job_lock:
+                        job.visible = False  # Make it a backup
+                        job_queue[job.word] = job
+                        print(f"🔄 Converted {job.word} to backup job")
         
         for e in pygame.event.get():
             # Handle common events (including ESC key)
@@ -644,7 +662,9 @@ def run_game():
             if total_prog >= 1:
                 # Remove the completed item
                 if flash["idx"] < len(items):
+                    removed_word = items[flash["idx"]]["word"]
                     items.pop(flash["idx"])
+                    print(f"🗑️ Removed completed item: {removed_word} (items on screen: {len(items) + 1} → {len(items)})")
                 if flash["idx"] < len(rects):
                     rects.pop(flash["idx"])
                 
@@ -659,17 +679,25 @@ def run_game():
                         items.insert(flash["idx"] if flash["idx"] < len(items) else len(items), new_it)
                         rects.insert(flash["idx"] if flash["idx"] < len(rects) else len(rects), pygame.Rect(pos, new_it["bounds"]))
                         loaded_words.add(backup_job.word)
+                        print(f"📦 Added backup replacement: {backup_job.word} (items on screen: {len(items) - 1} → {len(items)})")
                 
-                # Always create a new backup job to maintain the pool
-                current_job_count = get_job_count()
-                if current_job_count < 6:  # We want 5 visible + 1 backup = 6 total
+                # Only create exactly 1 new job to replace what we just used/completed
+                # This maintains the pool without over-creating
+                backup_count = get_backup_job_count()
+                if backup_count == 0:
+                    # We used our backup, create exactly 1 new backup
                     attempts = 0
                     while attempts < 10:
                         new_word = random.choice(CATEGORIES)
                         if create_job(new_word, resource_manager, visible=False):
-                            print(f"🆕 Created new backup job: {new_word} (total jobs: {current_job_count + 1})")
+                            print(f"🆕 Created replacement backup job: {new_word}")
                             break
                         attempts += 1
+                else:
+                    print(f"✅ Still have {backup_count} backup job(s), no need to create more")
+                
+                visible_count = get_visible_job_count()
+                print(f"📊 Current state: {len(items)} items on screen, {visible_count} visible jobs, {backup_count} backup jobs")
                 
                 flash = None
             
