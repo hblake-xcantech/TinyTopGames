@@ -12,7 +12,7 @@ except ImportError:
     print("⚠️ python-dotenv not installed. Using system environment variables only.")
 
 class ResourceManager:
-    def __init__(self):
+    def __init__(self, audio_ready_callback=None, audio_failed_callback=None):
         self.sounds = {}
         self.images = {}
         self.fonts = {}
@@ -31,6 +31,8 @@ class ResourceManager:
         self.voice_cache = {}
         self.voice_lock = threading.Lock()
         self.voice_worker_running = False
+        self.audio_ready_callback = audio_ready_callback
+        self.audio_failed_callback = audio_failed_callback
         
         # ElevenLabs settings
         self.api_key = os.getenv('ELEVENLABS_API_KEY')
@@ -155,6 +157,11 @@ class ResourceManager:
                     print(f"✓ Voice already exists: {word}")
                     with self.voice_lock:
                         self.voice_cache[word] = voice_file
+                    
+                    # Notify job system that audio is ready (even if it already existed)
+                    if self.audio_ready_callback:
+                        self.audio_ready_callback(word)
+                    
                     self.voice_queue.task_done()
                     continue
                 
@@ -185,12 +192,20 @@ class ResourceManager:
                     self.voice_cache[word] = voice_file
                 
                 print(f"✓ Generated voice: {word}")
+                
+                # Notify job system that audio is ready
+                if self.audio_ready_callback:
+                    self.audio_ready_callback(word)
+                
                 self.voice_queue.task_done()
                 
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"❌ Error generating voice for '{word}': {e}")
+                # Notify job system that audio failed
+                if self.audio_failed_callback:
+                    self.audio_failed_callback(word)
                 self.voice_queue.task_done()
     
     def play_voice(self, word):

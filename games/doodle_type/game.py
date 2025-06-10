@@ -16,6 +16,8 @@ import sys
 import os
 import threading
 import queue
+import dataclasses
+from typing import Optional
 
 try:
     from quickdraw import QuickDrawData
@@ -55,11 +57,127 @@ else:
     qd = None
     CATEGORIES = ["cat", "dog", "car", "house", "tree"]  # Fallback categories
 
-# Async download system
+# Unified job queue system
+@dataclasses.dataclass
+class DownloadJob:
+    word: str
+    image_ready: bool = False
+    audio_ready: bool = False
+    image_data: Optional[object] = None
+    visible: bool = True  # False for pre-downloaded backup items
+    image_failed: bool = False
+    audio_failed: bool = False
+    
+    @property
+    def is_complete(self) -> bool:
+        return self.image_ready and self.audio_ready and not self.image_failed and not self.audio_failed
+    
+    @property
+    def has_failed(self) -> bool:
+        return self.image_failed or self.audio_failed
+
+# Job management
+job_queue = {}  # word -> DownloadJob
+job_lock = threading.Lock()
 download_queue = queue.Queue()
-completed_downloads = {}
-download_lock = threading.Lock()
 download_thread = None
+failed_words = set()  # Track words that have failed to avoid retrying them
+
+def create_job(word: str, resource_manager=None, visible: bool = True):
+    """Create a new download job for a word"""
+    with job_lock:
+        if word not in job_queue and word not in failed_words:
+            job_queue[word] = DownloadJob(word=word, visible=visible)
+            print(f"📋 Created job for: {word} (visible: {visible})")
+            # Queue the image download
+            download_queue.put(word)
+            # Queue the audio download
+            if resource_manager:
+                resource_manager.preload_voice(word)
+                print(f"🎤 Queued audio for: {word}")
+            return True
+        return False
+
+def mark_image_ready(word: str, image_data):
+    """Mark the image as ready for a job"""
+    with job_lock:
+        if word in job_queue:
+            if image_data is None:
+                # Image download failed
+                job_queue[word].image_failed = True
+                print(f"❌ Image failed for: {word}")
+                return False
+            else:
+                job_queue[word].image_ready = True
+                job_queue[word].image_data = image_data
+                print(f"🖼️ Image ready for: {word}")
+                return job_queue[word].is_complete
+    return False
+
+def mark_audio_ready(word: str):
+    """Mark the audio as ready for a job"""
+    with job_lock:
+        if word in job_queue:
+            job_queue[word].audio_ready = True
+            print(f"🔊 Audio ready for: {word}")
+            return job_queue[word].is_complete
+    return False
+
+def mark_audio_failed(word: str):
+    """Mark the audio as failed for a job"""
+    with job_lock:
+        if word in job_queue:
+            job_queue[word].audio_failed = True
+            print(f"❌ Audio failed for: {word}")
+    return False
+
+def get_completed_jobs(visible_only: bool = True):
+    """Get all completed jobs and remove them from queue"""
+    completed = []
+    with job_lock:
+        if visible_only:
+            completed_words = [word for word, job in job_queue.items() 
+                             if job.is_complete and job.visible]
+        else:
+            completed_words = [word for word, job in job_queue.items() if job.is_complete]
+        
+        for word in completed_words:
+            completed.append(job_queue.pop(word))
+    return completed
+
+def get_backup_job():
+    """Get one backup job (invisible) and make it visible"""
+    with job_lock:
+        for word, job in job_queue.items():
+            if job.is_complete and not job.visible:
+                job.visible = True
+                print(f"🔄 Promoting backup job to visible: {word}")
+                return job_queue.pop(word)
+    return None
+
+def clean_failed_jobs(resource_manager=None):
+    """Remove failed jobs and create replacements"""
+    failed_jobs = []
+    with job_lock:
+        failed_words_list = [word for word, job in job_queue.items() if job.has_failed]
+        for word in failed_words_list:
+            failed_jobs.append(job_queue.pop(word))
+            failed_words.add(word)  # Don't retry this word
+    
+    # Create replacement jobs for failed ones
+    for failed_job in failed_jobs:
+        attempts = 0
+        while attempts < 10:  # Limit attempts to avoid infinite loops
+            new_word = random.choice(CATEGORIES)
+            if create_job(new_word, resource_manager, visible=failed_job.visible):
+                print(f"🔄 Replaced failed job '{failed_job.word}' with '{new_word}'")
+                break
+            attempts += 1
+
+def get_job_count():
+    """Get current number of jobs in queue"""
+    with job_lock:
+        return len(job_queue)
 
 def download_worker():
     """Background thread worker for downloading doodles"""
@@ -69,20 +187,24 @@ def download_worker():
             if word is None:  # Shutdown signal
                 break
             
-            print(f"Downloading {word} in background...")
+            print(f"⬇️ Downloading image for: {word}")
             # Use more efficient download - only try 3 times instead of 100
             drawing = choose_efficient(word)
             
-            with download_lock:
-                completed_downloads[word] = drawing
+            # Mark image as ready and check if job is complete
+            job_complete = mark_image_ready(word, drawing)
             
-            print(f"Completed download: {word}")
+            if job_complete:
+                print(f"✅ Job complete for: {word}")
+            
             download_queue.task_done()
             
         except queue.Empty:
             continue
         except Exception as e:
-            print(f"Error downloading {word}: {e}")
+            print(f"❌ Error downloading {word}: {e}")
+            # Mark as failed so it gets replaced
+            mark_image_ready(word, None)
             download_queue.task_done()
 
 def choose_efficient(word, tries=3):
@@ -111,18 +233,16 @@ def choose(word, tries=100):
     return qd.get_drawing(word)
 
 def get_drawing_async(word):
-    """Get a drawing, checking completed downloads first - NO SYNC FALLBACK"""
-    with download_lock:
-        if word in completed_downloads:
-            return completed_downloads.pop(word)
-    
-    # Return None if not ready - don't block!
+    """Get a drawing from a completed job"""
+    with job_lock:
+        if word in job_queue and job_queue[word].is_complete:
+            return job_queue[word].image_data
     return None
 
 def is_drawing_ready(word):
-    """Check if a drawing is ready without removing it"""
-    with download_lock:
-        return word in completed_downloads
+    """Check if a complete job is ready (both image and audio)"""
+    with job_lock:
+        return word in job_queue and job_queue[word].is_complete
 
 def decode_stroke(stroke):
     """Convert stroke data to list of (x,y) coordinates."""
@@ -242,6 +362,22 @@ def render_word_with_progress(word, buf, font, color):
     else:
         return font.render(display_word, True, color), False
 
+def build_from_job(job, font):
+    """Build item from a completed job"""
+    d = job.image_data
+    if not d or not d.strokes:
+        # Create placeholder if no drawing available
+        surf = pygame.Surface((DOODLE_SIZE, DOODLE_SIZE), pygame.SRCALPHA)
+        pygame.draw.rect(surf, TEXT, (0, 0, DOODLE_SIZE, DOODLE_SIZE), 2)
+    else:
+        surf = render(d.strokes, DOODLE_SIZE, TEXT, SMALL_W)
+    
+    cap = font.render(job.word.replace(' ', '_'), True, TEXT)
+    w = max(surf.get_width(), cap.get_width())
+    h = surf.get_height() + CAP_PAD + cap.get_height()
+    
+    return dict(word=job.word, drawing=d, surface=surf, caption=cap, bounds=(w, h), pos=(0, 0))
+
 def build(word, font):
     d = get_drawing_async(word)
     if not d or not d.strokes:
@@ -286,54 +422,14 @@ def run_game():
     font = pygame.font.SysFont(None, FONT_SIZE)
     clock = pygame.time.Clock()
     
-    # Initialize ResourceManager for sound
-    resource_manager = None
-    pen_sound_loaded = False
-    if not screenshot_mode:
-        try:
-            resource_manager = ResourceManager()
-            # Load pen sound as background music for special playback control
-            pen_sound_path = resource_manager.get_sound_path(SOUND_FILE)
-            if pen_sound_path:
-                pygame.mixer.music.load(pen_sound_path)
-                pen_sound_loaded = True
-                print(f"Successfully loaded {SOUND_FILE} for background music")
-            else:
-                print(f"Warning: Could not find {SOUND_FILE}")
-            print(f"ResourceManager initialized for sound")
-        except Exception as e:
-            print(f"Warning: Could not initialize ResourceManager: {e}")
-
     # Initialize game state
     items = []
     rects = []
     
     # Use fewer words in screenshot mode for faster loading
-    word_count = 1 if screenshot_mode else WORDS
+    word_count = 1 if screenshot_mode else 5  # 5 visible items
     selected_words = random.sample(CATEGORIES, word_count)
-    
-    # Start async download worker thread and begin downloads immediately
-    if not screenshot_mode:
-        download_thread = threading.Thread(target=download_worker, daemon=True)
-        download_thread.start()
-        
-        # Start downloading the initial words immediately
-        print(f"🎯 Starting background downloads for {len(selected_words)} words...")
-        for word in selected_words:
-            download_queue.put(word)
-        
-        # Also queue up some extra words for future use
-        extra_words = random.sample([w for w in CATEGORIES if w not in selected_words], 
-                                   min(10, len(CATEGORIES) - len(selected_words)))
-        for word in extra_words:
-            download_queue.put(word)
-        print(f"🎯 Also queued {len(extra_words)} extra words for future use")
-        
-        # Preload voices for only the initial words
-        if resource_manager:
-            resource_manager.preload_voices(selected_words)
-            print(f"🎤 Queued {len(selected_words)} voices for generation")
-    
+
     # Handle screenshot mode - load one doodle and take screenshot
     if screenshot_mode:
         it = build(selected_words[0], font)
@@ -355,27 +451,74 @@ def run_game():
         check_screenshot(screen, os.path.join(os.path.dirname(__file__), "thumbnail.png"))
         return
 
+    # Initialize ResourceManager for sound with callback
+    resource_manager = None
+    pen_sound_loaded = False
+    
+    # Start async download worker thread and begin downloads immediately
+    download_thread = threading.Thread(target=download_worker, daemon=True)
+    download_thread.start()
+    
+    try:
+        # Create callbacks for audio success/failure
+        def audio_ready_callback(word):
+            mark_audio_ready(word)
+        
+        def audio_failed_callback(word):
+            mark_audio_failed(word)
+        
+        resource_manager = ResourceManager(
+            audio_ready_callback=audio_ready_callback,
+            audio_failed_callback=audio_failed_callback
+        )
+        
+        # Create exactly 5 visible jobs + 1 backup job (6 total)
+        print(f"🎯 Creating {len(selected_words)} visible jobs...")
+        for word in selected_words:
+            create_job(word, resource_manager, visible=True)
+        
+        # Create 1 backup job (invisible until needed)
+        backup_word = random.choice([w for w in CATEGORIES if w not in selected_words])
+        create_job(backup_word, resource_manager, visible=False)
+        print(f"🎯 Created 1 backup job: {backup_word}")
+        
+        # Load pen sound as background music for special playback control
+        pen_sound_path = resource_manager.get_sound_path(SOUND_FILE)
+        if pen_sound_path:
+            pygame.mixer.music.load(pen_sound_path)
+            pen_sound_loaded = True
+            print(f"Successfully loaded {SOUND_FILE} for background music")
+        else:
+            print(f"Warning: Could not find {SOUND_FILE}")
+        print(f"ResourceManager initialized for sound")
+    except Exception as e:
+        print(f"Warning: Could not initialize ResourceManager: {e}")
+
     buf = ""
     flash = None
     running = True
     
-    # Track which words we've already loaded
+    # Track which words we've already loaded to prevent duplicates
     loaded_words = set()
     
     while running:
         now = pygame.time.get_ticks()
         
-        # Non-blocking check: add items as they become ready
-        for word in selected_words:
-            if word not in loaded_words and is_drawing_ready(word):
-                print(f"✅ Adding ready doodle: {word}")
+        # Clean up any failed jobs and create replacements
+        clean_failed_jobs(resource_manager)
+        
+        # Check for completed jobs (both image and audio ready)
+        completed_jobs = get_completed_jobs(visible_only=True)
+        for job in completed_jobs:
+            if job.word not in loaded_words:
+                print(f"✅ Adding completed job: {job.word}")
                 
-                it = build(word, font)
+                it = build_from_job(job, font)
                 if it["drawing"]:  # Only add if we got a valid drawing
                     it["pos"], r = random_pos(it["bounds"], rects)
                     items.append(it)
                     rects.append(r)
-                    loaded_words.add(word)
+                    loaded_words.add(job.word)
                     
                     # Check if the current buffer matches the newly loaded word
                     if buf and it["word"] == buf:
@@ -499,34 +642,34 @@ def run_game():
             
             # End flash after both drawing and display phases complete
             if total_prog >= 1:
-                # Try to find a ready replacement word
-                available_words = []
-                with download_lock:
-                    available_words = list(completed_downloads.keys())
-                
-                if available_words:
-                    new_word = random.choice(available_words)
-                    print(f"🔄 Replacing with ready word: {new_word}")
-                    new_it = build(new_word, font)
-                    if new_it["drawing"]:
-                        pos, r = random_pos(new_it["bounds"], [pygame.Rect(i["pos"], i["bounds"]) for i in items if i != it])
-                        new_it["pos"] = pos
-                        items[flash["idx"]] = new_it
-                    else:
-                        # If build failed, just remove the item
-                        items.pop(flash["idx"])
-                        rects.pop(flash["idx"])
-                else:
-                    # No replacement ready, just remove the completed item
-                    print("⏳ No replacement ready, removing completed item")
+                # Remove the completed item
+                if flash["idx"] < len(items):
                     items.pop(flash["idx"])
+                if flash["idx"] < len(rects):
                     rects.pop(flash["idx"])
                 
-                # Queue up a new word for future use
-                new_word_to_queue = random.choice(CATEGORIES)
-                download_queue.put(new_word_to_queue)
-                if resource_manager:
-                    resource_manager.preload_voice(new_word_to_queue)
+                # Try to use a backup job for instant replacement
+                backup_job = get_backup_job()
+                if backup_job:
+                    print(f"⚡ Using backup job for instant replacement: {backup_job.word}")
+                    new_it = build_from_job(backup_job, font)
+                    if new_it["drawing"]:
+                        pos, r = random_pos(new_it["bounds"], [pygame.Rect(i["pos"], i["bounds"]) for i in items])
+                        new_it["pos"] = pos
+                        items.insert(flash["idx"] if flash["idx"] < len(items) else len(items), new_it)
+                        rects.insert(flash["idx"] if flash["idx"] < len(rects) else len(rects), pygame.Rect(pos, new_it["bounds"]))
+                        loaded_words.add(backup_job.word)
+                
+                # Always create a new backup job to maintain the pool
+                current_job_count = get_job_count()
+                if current_job_count < 6:  # We want 5 visible + 1 backup = 6 total
+                    attempts = 0
+                    while attempts < 10:
+                        new_word = random.choice(CATEGORIES)
+                        if create_job(new_word, resource_manager, visible=False):
+                            print(f"🆕 Created new backup job: {new_word} (total jobs: {current_job_count + 1})")
+                            break
+                        attempts += 1
                 
                 flash = None
             
