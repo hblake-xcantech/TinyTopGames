@@ -6,3 +6,9 @@ __pycache__/
 .Python
 .env
 .envrc
+
+# Generated voice files
+resources/voice/
+
+# QuickDraw cache
+.quickdrawcache/

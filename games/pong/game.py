@@ -11,10 +11,11 @@ Usage:
 
 import pygame
 import sys
-from utils import check_screenshot
+import os
 
-# Import game utilities for common functionality
+# Add path to access root-level modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from utils import check_screenshot
 from game_utils import handle_common_events, quit_game, COLORS
 
 # Config

@@ -1,12 +1,17 @@
 {
   "pong": {
-    "game_hash": "3e8d5aeb41022e8b139b73a54cf5f62ea8e664b1fcd5a68e884bf4a3b829ed83",
+    "game_hash": "c9e4a75eeafa84a913f01250e1a5aa6f98a581e7889bbb481910eb0612ed6726",
     "thumbnail_path": "games/pong/thumbnail.png",
-    "generated_at": "1749436754.5517368"
+    "generated_at": "1749513445.7813425"
   },
   "snake": {
-    "game_hash": "d83cd4e4a06e2e7d2d1bb590ee6a7232ae9cd492ca586383b08d6da68a40a8b5",
+    "game_hash": "051a741bd04f576f92aa89ac004e2c06e6fccdfce1ad1c07dabff0e89e6eefe0",
     "thumbnail_path": "games/snake/thumbnail.png",
-    "generated_at": "1749436755.463055"
+    "generated_at": "1749513450.0511882"
+  },
+  "doodle_type": {
+    "game_hash": "3bbe0fbed205d5c30856ae47d9577bb8ead99ae827c4ce237d012768530712c9",
+    "thumbnail_path": "games/doodle_type/thumbnail.png",
+    "generated_at": "1749513449.146049"
   }
 }

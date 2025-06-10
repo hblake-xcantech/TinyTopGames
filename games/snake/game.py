@@ -18,10 +18,10 @@ import pygame
 import sys
 import os
 import random
-from utils import screenshot_requested, check_screenshot
 
-# Import game utilities for common functionality
+# Add path to access root-level modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from utils import screenshot_requested, check_screenshot
 from game_utils import handle_common_events, quit_game, COLORS
 
 # Config
