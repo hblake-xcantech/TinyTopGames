@@ -31,12 +31,18 @@ else
     exit 1
 fi
 
-# Check if pygame is installed in venv
-$PYTHON_CMD -c "import pygame" 2>/dev/null
+# Check if all requirements are installed
+echo "🔍 Checking dependencies..."
+$PYTHON_CMD -c "import pygame, requests, dotenv" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "❌ Error: pygame not found in venv!"
-    echo "Please run: source venv/bin/activate && pip install pygame"
-    exit 1
+    echo "📦 Installing missing dependencies..."
+    $PYTHON_CMD -m pip install -r requirements.txt
+    if [ $? -ne 0 ]; then
+        echo "❌ Error: Failed to install requirements!"
+        echo "Please check your internet connection and try again."
+        exit 1
+    fi
+    echo "✅ Dependencies installed successfully!"
 fi
 
 # Check if games directory exists
