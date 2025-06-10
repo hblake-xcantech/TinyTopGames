@@ -59,6 +59,7 @@ else:
 download_queue = queue.Queue()
 completed_downloads = {}
 download_lock = threading.Lock()
+download_thread = None
 
 def download_worker():
     """Background thread worker for downloading doodles"""
@@ -69,7 +70,8 @@ def download_worker():
                 break
             
             print(f"Downloading {word} in background...")
-            drawing = choose(word)
+            # Use more efficient download - only try 3 times instead of 100
+            drawing = choose_efficient(word)
             
             with download_lock:
                 completed_downloads[word] = drawing
@@ -83,6 +85,24 @@ def download_worker():
             print(f"Error downloading {word}: {e}")
             download_queue.task_done()
 
+def choose_efficient(word, tries=3):
+    """More efficient version that tries fewer times"""
+    for _ in range(tries):
+        try:
+            d = qd.get_drawing(word)
+            if d and d.recognized and sum(len(s) for s in d.strokes) > 20:
+                return d
+        except Exception as e:
+            print(f"Network error for {word}: {e}")
+            continue
+    
+    # Final attempt - return whatever we get
+    try:
+        return qd.get_drawing(word)
+    except Exception as e:
+        print(f"Failed to download {word}: {e}")
+        return None
+
 def choose(word, tries=100):
     for _ in range(tries):
         d = qd.get_drawing(word)
@@ -91,14 +111,18 @@ def choose(word, tries=100):
     return qd.get_drawing(word)
 
 def get_drawing_async(word):
-    """Get a drawing, checking completed downloads first"""
+    """Get a drawing, checking completed downloads first - NO SYNC FALLBACK"""
     with download_lock:
         if word in completed_downloads:
             return completed_downloads.pop(word)
     
-    # If not ready, download synchronously as fallback
-    print(f"Fallback sync download for: {word}")
-    return choose(word)
+    # Return None if not ready - don't block!
+    return None
+
+def is_drawing_ready(word):
+    """Check if a drawing is ready without removing it"""
+    with download_lock:
+        return word in completed_downloads
 
 def decode_stroke(stroke):
     """Convert stroke data to list of (x,y) coordinates."""
@@ -221,7 +245,7 @@ def render_word_with_progress(word, buf, font, color):
 def build(word, font):
     d = get_drawing_async(word)
     if not d or not d.strokes:
-        # Create placeholder
+        # Create placeholder if no drawing available
         surf = pygame.Surface((DOODLE_SIZE, DOODLE_SIZE), pygame.SRCALPHA)
         pygame.draw.rect(surf, TEXT, (0, 0, DOODLE_SIZE, DOODLE_SIZE), 2)
     else:
@@ -288,23 +312,27 @@ def run_game():
     word_count = 1 if screenshot_mode else WORDS
     selected_words = random.sample(CATEGORIES, word_count)
     
-    # Start async download worker thread
+    # Start async download worker thread and begin downloads immediately
     if not screenshot_mode:
         download_thread = threading.Thread(target=download_worker, daemon=True)
         download_thread.start()
         
-        # Queue up only the initial words needed
+        # Start downloading the initial words immediately
+        print(f"🎯 Starting background downloads for {len(selected_words)} words...")
         for word in selected_words:
             download_queue.put(word)
+        
+        # Also queue up some extra words for future use
+        extra_words = random.sample([w for w in CATEGORIES if w not in selected_words], 
+                                   min(10, len(CATEGORIES) - len(selected_words)))
+        for word in extra_words:
+            download_queue.put(word)
+        print(f"🎯 Also queued {len(extra_words)} extra words for future use")
         
         # Preload voices for only the initial words
         if resource_manager:
             resource_manager.preload_voices(selected_words)
             print(f"🎤 Queued {len(selected_words)} voices for generation")
-    
-    # Background loading state
-    loading_index = 0
-    loading_complete = False
     
     # Handle screenshot mode - load one doodle and take screenshot
     if screenshot_mode:
@@ -331,52 +359,46 @@ def run_game():
     flash = None
     running = True
     
-    # Load doodles counter (load one every few frames to avoid blocking)
-    load_counter = 0
+    # Track which words we've already loaded
+    loaded_words = set()
     
     while running:
         now = pygame.time.get_ticks()
         
-        # Background loading: Load one doodle every 10 frames if not complete
-        if not loading_complete and load_counter % 10 == 0:
-            if loading_index < len(selected_words):
-                w = selected_words[loading_index]
-                print(f"Loading doodle: {w}")
+        # Non-blocking check: add items as they become ready
+        for word in selected_words:
+            if word not in loaded_words and is_drawing_ready(word):
+                print(f"✅ Adding ready doodle: {word}")
                 
-                it = build(w, font)
-                it["pos"], r = random_pos(it["bounds"], rects)
-                items.append(it)
-                rects.append(r)
-                
-                # Check if the current buffer matches the newly loaded word
-                if buf and it["word"] == buf:
-                    draw_speed = random.uniform(0.8, 1.2)
-                    flash = dict(start=now, item=it, idx=len(items)-1, draw_speed=draw_speed)
+                it = build(word, font)
+                if it["drawing"]:  # Only add if we got a valid drawing
+                    it["pos"], r = random_pos(it["bounds"], rects)
+                    items.append(it)
+                    rects.append(r)
+                    loaded_words.add(word)
                     
-                    # Play voice pronunciation
-                    if resource_manager:
-                        resource_manager.play_voice(it["word"])
-                    
-                    # Start playing pen sound
-                    if pen_sound_loaded and it["drawing"] and it["drawing"].strokes:
-                        actual_duration = (FLASH_MS / draw_speed) / 1000.0
-                        max_start = max(0, (SOUND_LENGTH_MS / 1000.0) - actual_duration)
-                        start_pos = random.uniform(0, max_start)
+                    # Check if the current buffer matches the newly loaded word
+                    if buf and it["word"] == buf:
+                        draw_speed = random.uniform(0.8, 1.2)
+                        flash = dict(start=now, item=it, idx=len(items)-1, draw_speed=draw_speed)
                         
-                        print(f"Playing sound from position {start_pos:.2f}s for ~{actual_duration:.2f}s")
+                        # Play voice pronunciation
+                        if resource_manager:
+                            resource_manager.play_voice(it["word"])
                         
-                        pygame.mixer.music.set_volume(0.8)
-                        pygame.mixer.music.play(0, start=start_pos)
-                    
-                    buf = ""
-                
-                loading_index += 1
-                
-                if loading_index >= len(selected_words):
-                    loading_complete = True
-                    print(f"Loaded all {len(items)} doodles!")
-        
-        load_counter += 1
+                        # Start playing pen sound
+                        if pen_sound_loaded and it["drawing"] and it["drawing"].strokes:
+                            actual_duration = (FLASH_MS / draw_speed) / 1000.0
+                            max_start = max(0, (SOUND_LENGTH_MS / 1000.0) - actual_duration)
+                            start_pos = random.uniform(0, max_start)
+                            
+                            print(f"Playing sound from position {start_pos:.2f}s for ~{actual_duration:.2f}s")
+                            
+                            pygame.mixer.music.set_volume(0.8)
+                            pygame.mixer.music.play(0, start=start_pos)
+                        
+                        buf = ""
+                        break
         
         for e in pygame.event.get():
             # Handle common events (including ESC key)
@@ -477,16 +499,35 @@ def run_game():
             
             # End flash after both drawing and display phases complete
             if total_prog >= 1:
-                new_word = random.choice(CATEGORIES)
-                # Queue up download for this new word
-                download_queue.put(new_word)
-                # Preload voice for this new word
+                # Try to find a ready replacement word
+                available_words = []
+                with download_lock:
+                    available_words = list(completed_downloads.keys())
+                
+                if available_words:
+                    new_word = random.choice(available_words)
+                    print(f"🔄 Replacing with ready word: {new_word}")
+                    new_it = build(new_word, font)
+                    if new_it["drawing"]:
+                        pos, r = random_pos(new_it["bounds"], [pygame.Rect(i["pos"], i["bounds"]) for i in items if i != it])
+                        new_it["pos"] = pos
+                        items[flash["idx"]] = new_it
+                    else:
+                        # If build failed, just remove the item
+                        items.pop(flash["idx"])
+                        rects.pop(flash["idx"])
+                else:
+                    # No replacement ready, just remove the completed item
+                    print("⏳ No replacement ready, removing completed item")
+                    items.pop(flash["idx"])
+                    rects.pop(flash["idx"])
+                
+                # Queue up a new word for future use
+                new_word_to_queue = random.choice(CATEGORIES)
+                download_queue.put(new_word_to_queue)
                 if resource_manager:
-                    resource_manager.preload_voice(new_word)
-                new_it = build(new_word, font)
-                pos, r = random_pos(new_it["bounds"], [pygame.Rect(i["pos"], i["bounds"]) for i in items if i != it])
-                new_it["pos"] = pos
-                items[flash["idx"]] = new_it
+                    resource_manager.preload_voice(new_word_to_queue)
+                
                 flash = None
             
             clock.tick(60)

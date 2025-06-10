@@ -169,8 +169,8 @@ class ResourceManager:
                     'text': word,
                     'model_id': 'eleven_multilingual_v2',
                     'voice_settings': {
-                        'stability': 1.0,
-                        'similarity_boost': 1.0
+                        'stability': 0.8,  # Slightly faster generation
+                        'similarity_boost': 0.8
                     }
                 }
                 
