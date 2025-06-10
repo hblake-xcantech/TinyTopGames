@@ -38,11 +38,24 @@ if [ $? -ne 0 ]; then
     echo "📦 Installing missing dependencies..."
     $PYTHON_CMD -m pip install -r requirements.txt
     if [ $? -ne 0 ]; then
-        echo "❌ Error: Failed to install requirements!"
-        echo "Please check your internet connection and try again."
-        exit 1
+        echo "⚠️  Some packages failed to install. Trying alternative approach..."
+        # Try installing without problematic packages first
+        $PYTHON_CMD -m pip install pygame requests python-dotenv
+        if [ $? -ne 0 ]; then
+            echo "❌ Error: Failed to install core requirements!"
+            echo "Please check your internet connection and try again."
+            exit 1
+        fi
+        
+        # Try quickdraw separately (might fail on old systems, but game can still work)
+        echo "📦 Attempting to install quickdraw (may fail on old systems)..."
+        $PYTHON_CMD -m pip install quickdraw
+        if [ $? -ne 0 ]; then
+            echo "⚠️  quickdraw failed to install - doodle_type game will not work"
+            echo "But other games should still work fine!"
+        fi
     fi
-    echo "✅ Dependencies installed successfully!"
+    echo "✅ Dependencies installed!"
 fi
 
 # Check if games directory exists

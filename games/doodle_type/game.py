@@ -16,7 +16,15 @@ import sys
 import os
 import threading
 import queue
-from quickdraw import QuickDrawData
+
+try:
+    from quickdraw import QuickDrawData
+    QUICKDRAW_AVAILABLE = True
+except ImportError:
+    print("⚠️ QuickDraw not available - this game requires it to function")
+    print("Please install with: pip install quickdraw")
+    QUICKDRAW_AVAILABLE = False
+    QuickDrawData = None
 
 # Add path to access root-level modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -40,8 +48,12 @@ BIG_W = 6
 SOUND_FILE = "pen_paper"
 SOUND_LENGTH_MS = 33000  # 33 seconds
 
-qd = QuickDrawData()
-CATEGORIES = qd.drawing_names
+if QUICKDRAW_AVAILABLE:
+    qd = QuickDrawData()
+    CATEGORIES = qd.drawing_names
+else:
+    qd = None
+    CATEGORIES = ["cat", "dog", "car", "house", "tree"]  # Fallback categories
 
 # Async download system
 download_queue = queue.Queue()
@@ -233,6 +245,12 @@ def random_pos(bounds, rects):
 
 def run_game():
     """Main game function"""
+    if not QUICKDRAW_AVAILABLE:
+        print("❌ Cannot run Doodle Type: QuickDraw library not available")
+        print("This is likely due to Pillow installation issues on this system")
+        print("Please try running other games in the collection!")
+        return
+        
     pygame.init()
     screenshot_mode = screenshot_requested()
     

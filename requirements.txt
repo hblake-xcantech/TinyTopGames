@@ -2,3 +2,5 @@ pygame==2.5.2
 quickdraw
 requests
 python-dotenv
+# For old 32-bit systems that have trouble with Pillow
+Pillow==8.4.0
