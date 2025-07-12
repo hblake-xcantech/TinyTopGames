@@ -18,6 +18,8 @@ import threading
 import queue
 import dataclasses
 from typing import Optional
+import pickle
+from pathlib import Path
 
 try:
     from quickdraw import QuickDrawData
@@ -82,6 +84,53 @@ job_lock = threading.Lock()
 download_queue = queue.Queue()
 download_thread = None
 failed_words = set()  # Track words that have failed to avoid retrying them
+
+# Drawing cache system
+drawing_cache = {}  # word -> drawing_data
+drawing_cache_lock = threading.Lock()
+cache_dir = os.path.join(os.path.dirname(__file__), "drawing_cache")
+
+def init_drawing_cache():
+    """Initialize the drawing cache system and load from disk"""
+    Path(cache_dir).mkdir(exist_ok=True)
+    
+    # Load existing cache from disk
+    cache_file = os.path.join(cache_dir, "drawings.pkl")
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                loaded_cache = pickle.load(f)
+                with drawing_cache_lock:
+                    drawing_cache.update(loaded_cache)
+                print(f"💾 Loaded {len(loaded_cache)} cached drawings from disk")
+        except Exception as e:
+            print(f"⚠️ Could not load drawing cache: {e}")
+
+def save_drawing_cache():
+    """Save the current drawing cache to disk"""
+    cache_file = os.path.join(cache_dir, "drawings.pkl")
+    try:
+        with drawing_cache_lock:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(drawing_cache, f)
+            print(f"💾 Saved {len(drawing_cache)} drawings to cache")
+    except Exception as e:
+        print(f"⚠️ Could not save drawing cache: {e}")
+
+def get_cached_drawing(word):
+    """Get a drawing from cache if available"""
+    with drawing_cache_lock:
+        return drawing_cache.get(word)
+
+def cache_drawing(word, drawing_data):
+    """Cache a drawing for future use"""
+    with drawing_cache_lock:
+        drawing_cache[word] = drawing_data
+        print(f"💾 Cached drawing for: {word} (cache size: {len(drawing_cache)})")
+    
+    # Save to disk every 10 new drawings to avoid too much I/O
+    if len(drawing_cache) % 10 == 0:
+        threading.Thread(target=save_drawing_cache, daemon=True).start()
 
 def create_job(word: str, resource_manager=None, visible: bool = True):
     """Create a new download job for a word"""
@@ -218,19 +267,31 @@ def download_worker():
             download_queue.task_done()
 
 def choose_efficient(word, tries=3):
-    """More efficient version that tries fewer times"""
+    """More efficient version that tries fewer times and uses cache"""
+    # First check cache
+    cached = get_cached_drawing(word)
+    if cached:
+        print(f"🔄 Using cached drawing for: {word}")
+        return cached
+    
+    # Not in cache, download it
+    print(f"⬇️ Downloading new drawing for: {word}")
     for _ in range(tries):
         try:
             d = qd.get_drawing(word)
             if d and d.recognized and sum(len(s) for s in d.strokes) > 20:
+                cache_drawing(word, d)  # Cache successful download
                 return d
         except Exception as e:
             print(f"Network error for {word}: {e}")
             continue
     
-    # Final attempt - return whatever we get
+    # Final attempt - return whatever we get and cache it
     try:
-        return qd.get_drawing(word)
+        d = qd.get_drawing(word)
+        if d:
+            cache_drawing(word, d)  # Cache even if not perfect
+        return d
     except Exception as e:
         print(f"Failed to download {word}: {e}")
         return None
@@ -420,6 +481,9 @@ def run_game():
         print("This is likely due to Pillow installation issues on this system")
         print("Please try running other games in the collection!")
         return
+    
+    # Initialize drawing cache system
+    init_drawing_cache()
         
     pygame.init()
     screenshot_mode = screenshot_requested()
@@ -517,6 +581,46 @@ def run_game():
         # Clean up any failed jobs and create replacements
         clean_failed_jobs(resource_manager)
         
+        # Conservative job maintenance: Only create jobs if we're genuinely low
+        visible_count = get_visible_job_count()
+        backup_count = get_backup_job_count()
+        total_jobs = visible_count + backup_count
+        items_count = len(items)
+        
+        # Only check job levels every 60 frames (1 second) to avoid spam
+        if now % 1000 < 17:  # Roughly once per second
+            print(f"📊 Status: {items_count} items on screen, {visible_count} visible jobs, {backup_count} backup jobs, {total_jobs} total jobs")
+            
+            # Fixed logic: Account for items already on screen
+            # We want: 5 items on screen + 2 jobs ready (1 visible + 1 backup)
+            # So: items_on_screen + jobs_in_queue should be around 7
+            effective_total = items_count + total_jobs
+            target_effective_total = 7
+            
+            if effective_total < target_effective_total:
+                jobs_needed = target_effective_total - effective_total
+                print(f"⚠️ Low on total pipeline ({effective_total}/7), need {jobs_needed} more jobs")
+                
+                # Create needed jobs
+                for _ in range(jobs_needed):
+                    # Prioritize backup jobs if we have none
+                    create_as_backup = (backup_count == 0)
+                    
+                    attempts = 0
+                    while attempts < 10:
+                        new_word = random.choice(CATEGORIES)
+                        if create_job(new_word, resource_manager, visible=not create_as_backup):
+                            if create_as_backup:
+                                backup_count += 1
+                                print(f"🆕 Created needed backup job: {new_word}")
+                            else:
+                                visible_count += 1
+                                print(f"🆕 Created needed visible job: {new_word}")
+                            break
+                        attempts += 1
+            else:
+                print(f"✅ Pipeline full ({effective_total}/7), no jobs needed")
+        
         # Check for completed jobs (both image and audio ready)
         completed_jobs = get_completed_jobs(visible_only=True)
         for job in completed_jobs:
@@ -554,8 +658,8 @@ def run_game():
                         break
             elif len(items) >= 5:
                 print(f"🚫 Not adding {job.word} - already have {len(items)} items on screen (max 5)")
-                # Return the job to the queue as a backup if we have no backups
-                if get_backup_job_count() == 0:
+                # Return the job to the queue as a backup if we need more backups
+                if get_backup_job_count() < 2:  # Allow up to 2 backup jobs
                     with job_lock:
                         job.visible = False  # Make it a backup
                         job_queue[job.word] = job
@@ -680,25 +784,10 @@ def run_game():
                         rects.insert(flash["idx"] if flash["idx"] < len(rects) else len(rects), pygame.Rect(pos, new_it["bounds"]))
                         loaded_words.add(backup_job.word)
                         print(f"📦 Added backup replacement: {backup_job.word} (items on screen: {len(items) - 1} → {len(items)})")
-                
-                # Only create exactly 1 new job to replace what we just used/completed
-                # This maintains the pool without over-creating
-                backup_count = get_backup_job_count()
-                if backup_count == 0:
-                    # We used our backup, create exactly 1 new backup
-                    attempts = 0
-                    while attempts < 10:
-                        new_word = random.choice(CATEGORIES)
-                        if create_job(new_word, resource_manager, visible=False):
-                            print(f"🆕 Created replacement backup job: {new_word}")
-                            break
-                        attempts += 1
                 else:
-                    print(f"✅ Still have {backup_count} backup job(s), no need to create more")
+                    print(f"⏳ No backup job available for instant replacement")
                 
-                visible_count = get_visible_job_count()
-                print(f"📊 Current state: {len(items)} items on screen, {visible_count} visible jobs, {backup_count} backup jobs")
-                
+                # The main loop job maintenance will ensure we have the right number of jobs
                 flash = None
             
             clock.tick(60)
@@ -735,6 +824,9 @@ def run_game():
         
         pygame.display.flip()
         clock.tick(60)
+    
+    # Save drawing cache before exit
+    save_drawing_cache()
     
     # Use game_utils quit instead of pygame.quit() directly
     quit_game()

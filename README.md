@@ -10,6 +10,22 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Environment Configuration
+
+If you want to use voice features, you'll need to set up an ElevenLabs API key:
+
+1. Copy the sample environment file:
+   ```bash
+   cp env.example .env
+   ```
+
+2. Get your API key from [ElevenLabs](https://elevenlabs.io/)
+
+3. Edit the `.env` file and replace `your_elevenlabs_api_key_here` with your actual API key:
+   ```
+   ELEVENLABS_API_KEY=sk-your-actual-api-key-here
+   ```
+
 ## Run the game
 
 ```bash
